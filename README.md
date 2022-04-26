@@ -1,4 +1,4 @@
-# doc-gen4
+# DocGen4
 Document Generator for Lean 4
 
 ## Usage
@@ -14,3 +14,16 @@ You could e.g. host the files locally with the built-in Python webserver:
 ```sh
 $ cd build/doc && python -m http.server
 ```
+
+## Develop
+
+Enable auto loading dependencies into the shell with `direnv allow` or manually with `nix develop`.
+
+## Building
+
+Build with `nix build .`
+
+## Tests
+
+Run tests with `nix run .#test`
+
