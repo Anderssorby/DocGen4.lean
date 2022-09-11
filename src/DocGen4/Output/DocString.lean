@@ -44,7 +44,7 @@ partial def xmlGetHeadingId (el : Xml.Element) : String :=
   elementToPlainText el |> replaceCharSeq unicodeToDrop "-"
   where
     elementToPlainText el := match el with 
-    | (Element.Element name attrs contents) => 
+    | (Element.Element _ _ contents) => 
       "".intercalate (contents.toList.map contentToPlainText)
     contentToPlainText c := match c with
     | Content.Element el => elementToPlainText el
@@ -128,7 +128,7 @@ def addHeadingAttributes (el : Element) (modifyElement : Element → HtmlM Eleme
       |>.insert "class" "markdown-heading"
     let newContents := (← 
       contents.mapM (λ c => match c with
-      | Content.Element e => (modifyElement e).map (Content.Element)
+      | Content.Element e => return Content.Element (← modifyElement e)
       | _ => pure c))
       |>.push (Content.Character " ")
       |>.push (Content.Element anchor)
@@ -138,9 +138,8 @@ def addHeadingAttributes (el : Element) (modifyElement : Element → HtmlM Eleme
 def extendAnchor (el : Element) : HtmlM Element := do
   match el with
   | Element.Element name attrs contents =>
-    let root ← getRoot
-    let newAttrs ← match (attrs.find? "href").map extendLink with
-    | some href => href.map (attrs.insert "href")
+    let newAttrs ← match attrs.find? "href" with
+    | some href => pure (attrs.insert "href" (← extendLink href))
     | none => pure attrs
     pure ⟨ name, newAttrs, contents⟩
 
@@ -161,7 +160,7 @@ def autoLink (el : Element) : HtmlM Element := do
       match link? with
       | some link => 
         let attributes := Std.RBMap.empty.insert "href" link
-        pure [Content.Element $ Element.Element "a" attributes #[Content.Character s]]
+        pure [Content.Element <| Element.Element "a" attributes #[Content.Character s]]
       | none =>
         let sHead := s.dropRightWhile (λ c => c ≠ '.')
         let sTail := s.takeRightWhile (λ c => c ≠ '.')
@@ -171,7 +170,7 @@ def autoLink (el : Element) : HtmlM Element := do
           let attributes := Std.RBMap.empty.insert "href" link'
           pure [
             Content.Character sHead,
-            Content.Element $ Element.Element "a" attributes #[Content.Character sTail]
+            Content.Element <| Element.Element "a" attributes #[Content.Character sTail]
           ]
         | none =>
           pure [Content.Character s]
@@ -194,7 +193,7 @@ partial def modifyElement (element : Element) : HtmlM Element :=
     -- recursively modify
     else
       let newContents ← contents.mapM λ c => match c with
-        | Content.Element e => (modifyElement e).map Content.Element
+        | Content.Element e => return Content.Element (← modifyElement e)
         | _ => pure c
       pure ⟨ name, attrs, newContents ⟩ 
 
@@ -204,7 +203,7 @@ def docStringToHtml (s : String) : HtmlM (Array Html) := do
   match manyDocument rendered.mkIterator with
   | Parsec.ParseResult.success _ res => 
     res.mapM λ x => do
-      pure (Html.text $ toString (← modifyElement x))
+      pure (Html.text <| toString (← modifyElement x))
   | _ => pure #[Html.text rendered]
 
 end Output

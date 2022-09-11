@@ -87,7 +87,7 @@ structure OpaqueInfo extends Info where
   A value of partial is interpreted as this opaque being part of a partial def
   since the actual definition for a partial def is hidden behind an inaccessible value.
   -/
-  unsafeInformation : DefinitionSafety
+  definitionSafety : DefinitionSafety
   deriving Inhabited
 
 /--
@@ -103,7 +103,10 @@ structure DefinitionInfo extends Info where
 /--
 Information about an `instance` declaration.
 -/
-abbrev InstanceInfo := DefinitionInfo
+structure InstanceInfo extends DefinitionInfo where
+  className : Name
+  typeNames : Array Name
+  deriving Inhabited
 
 /--
 Information about an `inductive` declaration
@@ -137,16 +140,12 @@ structure StructureInfo extends Info where
 /--
 Information about a `class` declaration.
 -/
-structure ClassInfo extends StructureInfo where
-  instances : Array Name
-  deriving Inhabited
+abbrev ClassInfo := StructureInfo
 
 /--
 Information about a `class inductive` declaration.
 -/
-structure ClassInductiveInfo extends InductiveInfo where
-  instances : Array Name
-  deriving Inhabited
+abbrev ClassInductiveInfo := InductiveInfo
 
 /--
 A general type for informations about declarations.
@@ -178,9 +177,9 @@ def prettyPrintTerm (expr : Expr) : MetaM CodeWithInfos := do
     fileMap := default,
     ngen := ← getNGen
   }
-  pure $ tagExprInfos ctx infos tt
+  pure <| tagExprInfos ctx infos tt
 
 def isInstance (declName : Name) : MetaM Bool := do
-  pure $ (instanceExtension.getState (←getEnv)).instanceNames.contains declName
+  pure <| (instanceExtension.getState (←getEnv)).instanceNames.contains declName
 
 end DocGen4.Process

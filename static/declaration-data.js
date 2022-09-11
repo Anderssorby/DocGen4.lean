@@ -6,6 +6,7 @@
 
 const CACHE_DB_NAME = "declaration-data";
 const CACHE_DB_VERSION = 1;
+const CACHE_DB_KEY = "DECLARATIONS_KEY";
 
 /**
  * The DeclarationDataCenter is used for declaration searching.
@@ -41,42 +42,21 @@ export class DeclarationDataCenter {
    */
   static async init() {
     if (!DeclarationDataCenter.singleton) {
-      const timestampUrl = new URL(
-        `${SITE_ROOT}declaration-data.timestamp`,
+      const dataListUrl = new URL(
+        `${SITE_ROOT}/declarations/declaration-data.bmp`,
         window.location
       );
-      const dataUrl = new URL(
-        `${SITE_ROOT}declaration-data.bmp`,
-        window.location
-      );
-
-      const timestampRes = await fetch(timestampUrl);
-      const timestamp = await timestampRes.text();
 
       // try to use cache first
-      const data = await fetchCachedDeclarationData(timestamp).catch(_e => null);
+      const data = await fetchCachedDeclarationData().catch(_e => null);
       if (data) {
         // if data is defined, use the cached one.
         DeclarationDataCenter.singleton = new DeclarationDataCenter(data);
       } else {
         // undefined. then fetch the data from the server.
-        const dataRes = await fetch(dataUrl);
-        const dataJson = await dataRes.json();
-        // the data is a map of name (original case) to declaration data.
-        const data = new Map(
-          dataJson.map(({ name, doc, link, docLink, sourceLink }) => [
-            name,
-            {
-              name,
-              lowerName: name.toLowerCase(),
-              lowerDoc: doc.toLowerCase(),
-              link,
-              docLink,
-              sourceLink,
-            },
-          ])
-        );
-        await cacheDeclarationData(timestamp, data);
+        const dataListRes = await fetch(dataListUrl);
+        const data = await dataListRes.json();
+        await cacheDeclarationData(data);
         DeclarationDataCenter.singleton = new DeclarationDataCenter(data);
       }
     }
@@ -92,11 +72,61 @@ export class DeclarationDataCenter {
       return [];
     }
     if (strict) {
-      let decl = this.declarationData.get(pattern);
+      let decl = this.declarationData.declarations[pattern];
       return decl ? [decl] : [];
     } else {
-      return getMatches(this.declarationData, pattern);
+      return getMatches(this.declarationData.declarations, pattern);
     }
+  }
+
+  /**
+   * Search for all instances of a certain typeclass
+   * @returns {Array<String>}
+   */
+  instancesForClass(className) {
+    const instances = this.declarationData.instances[className];
+    if (!instances) {
+      return [];
+    } else {
+      return instances;
+    }
+  }
+
+  /**
+   * Search for all instances that involve a certain type
+   * @returns {Array<String>}
+   */
+  instancesForType(typeName) {
+    const instances = this.declarationData.instancesFor[typeName];
+    if (!instances) {
+      return [];
+    } else {
+      return instances;
+    }
+  }
+
+  /**
+   * Analogous to Lean declNameToLink
+   * @returns {String}
+   */
+  declNameToLink(declName) {
+    return this.declarationData.declarations[declName].docLink;
+  }
+
+  /**
+   * Find all modules that imported the given one.
+   * @returns {Array<String>}
+   */
+  moduleImportedBy(moduleName) {
+    return this.declarationData.importedBy[moduleName];
+  }
+
+  /**
+   * Analogous to Lean moduleNameToLink
+   * @returns {String}
+   */
+  moduleNameToLink(moduleName) {
+    return this.declarationData.modules[moduleName];
   }
 }
 
@@ -133,14 +163,14 @@ function getMatches(declarations, pattern, maxResults = 30) {
   const lowerPats = pattern.toLowerCase().split(/\s/g);
   const patNoSpaces = pattern.replace(/\s/g, "");
   const results = [];
-  for (const {
+  for (const [_, {
     name,
-    lowerName,
-    lowerDoc,
-    link,
+    doc,
     docLink,
     sourceLink,
-  } of declarations.values()) {
+  }] of Object.entries(declarations)) {
+    const lowerName = name.toLowerCase();
+    const lowerDoc = doc.toLowerCase();
     let err = matchCaseSensitive(name, lowerName, patNoSpaces);
     // match all words as substrings of docstring
     if (
@@ -156,7 +186,6 @@ function getMatches(declarations, pattern, maxResults = 30) {
         err,
         lowerName,
         lowerDoc,
-        link,
         docLink,
         sourceLink,
       });
@@ -195,17 +224,16 @@ async function getDeclarationDatabase() {
 
 /**
  * Store data in indexedDB object store.
- * @param {string} timestamp
  * @param {Map<string, any>} data
  */
-async function cacheDeclarationData(timestamp, data) {
+async function cacheDeclarationData(data) {
   let db = await getDeclarationDatabase();
   let store = db
     .transaction("declaration", "readwrite")
     .objectStore("declaration");
   return new Promise((resolve, reject) => {
     let clearRequest = store.clear();
-    let addRequest = store.add(data, timestamp);
+    let addRequest = store.add(data, CACHE_DB_KEY);
 
     addRequest.onsuccess = function (event) {
       resolve();
@@ -221,16 +249,15 @@ async function cacheDeclarationData(timestamp, data) {
 
 /**
  * Retrieve data from indexedDB database.
- * @param {string} timestamp
  * @returns {Promise<Map<string, any>|undefined>}
  */
-async function fetchCachedDeclarationData(timestamp) {
+async function fetchCachedDeclarationData() {
   let db = await getDeclarationDatabase();
   let store = db
     .transaction("declaration", "readonly")
     .objectStore("declaration");
   return new Promise((resolve, reject) => {
-    let transactionRequest = store.get(timestamp);
+    let transactionRequest = store.get(CACHE_DB_KEY);
     transactionRequest.onsuccess = function (event) {
       resolve(event.result);
     };

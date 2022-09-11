@@ -35,7 +35,7 @@ def argToHtml (arg : Arg) : HtmlM Html := do
   let mut nodes := #[Html.text s!"{l}{arg.name.toString} : "]
   nodes := nodes.append (←infoFormatToHtml arg.type)
   nodes := nodes.push r
-  let inner := Html.element "span" true #[("class", "fn")] nodes
+  let inner := <span class="fn">[nodes]</span>
   let html := Html.element "span" false #[("class", "decl_args")] #[inner]
   if implicit then
     pure <span class="impl_arg">{html}</span>
@@ -53,7 +53,7 @@ def structureInfoHeader (s : Process.StructureInfo) : HtmlM (Array Html) := do
     let mut parents := #[]
     for parent in s.parents do
       let link ← declNameToHtmlBreakWithinLink parent
-      let inner := Html.element "span" true #[("class", "fn")] #[link]
+      let inner := <span class="fn">{link}</span>
       let html:= Html.element "span" false #[("class", "decl_parent")] #[inner]
       parents := parents.push html
     nodes := nodes.append (parents.toList.intersperse (Html.text ", ")).toArray
@@ -65,7 +65,7 @@ and name.
 -/
 def docInfoHeader (doc : DocInfo) : HtmlM Html := do
   let mut nodes := #[]
-  nodes := nodes.push <span class="decl_kind">{doc.getKindDescription}</span>
+  nodes := nodes.push <| Html.element "span" false #[("class", "decl_kind")] #[doc.getKindDescription]
   nodes := nodes.push
     <span class="decl_name">
       <a class="break_within" href={←declNameToLink doc.getName}>
@@ -78,11 +78,11 @@ def docInfoHeader (doc : DocInfo) : HtmlM Html := do
 
   match doc with
   | DocInfo.structureInfo i => nodes := nodes.append (←structureInfoHeader i)
-  | DocInfo.classInfo i => nodes := nodes.append (←structureInfoHeader i.toStructureInfo)
+  | DocInfo.classInfo i => nodes := nodes.append (←structureInfoHeader i)
   | _ => nodes := nodes
 
-  nodes := nodes.push <span class="decl_args">:</span>
-  nodes := nodes.push $ Html.element "div" true #[("class", "decl_type")] (←infoFormatToHtml doc.getType)
+  nodes := nodes.push <| Html.element "span" true #[("class", "decl_args")] #[" :"]
+  nodes := nodes.push <div class="decl_type">[←infoFormatToHtml doc.getType]</div>
   pure <div class="decl_header"> [nodes] </div>
 
 /--
@@ -95,23 +95,34 @@ def docInfoToHtml (module : Name) (doc : DocInfo) : HtmlM Html := do
   | DocInfo.structureInfo i => structureToHtml i
   | DocInfo.classInfo i => classToHtml i
   | DocInfo.classInductiveInfo i => classInductiveToHtml i
-  | i => pure #[]
+  | _ => pure #[]
   -- rendered doc stirng
   let docStringHtml ← match doc.getDocString with
   | some s => docStringToHtml s
   | none => pure #[]
   -- extra information like equations and instances
   let extraInfoHtml ← match doc with
-  | DocInfo.classInfo i => pure #[←classInstancesToHtml i.instances]
+  | DocInfo.classInfo i => pure #[←classInstancesToHtml i.name]
   | DocInfo.definitionInfo i => equationsToHtml i
-  | DocInfo.instanceInfo i => equationsToHtml i
-  | DocInfo.classInductiveInfo i => pure #[←classInstancesToHtml i.instances]
-  | i => pure #[]
+  | DocInfo.instanceInfo i => equationsToHtml i.toDefinitionInfo
+  | DocInfo.classInductiveInfo i => pure #[←classInstancesToHtml i.name]
+  | DocInfo.inductiveInfo i => pure #[←instancesForToHtml i.name]
+  | DocInfo.structureInfo i => pure #[←instancesForToHtml i.name]
+  | _ => pure #[]
   let attrs := doc.getAttrs
   let attrsHtml :=
     if attrs.size > 0 then
       let attrStr := "@[" ++ String.intercalate ", " doc.getAttrs.toList ++ "]"
       #[Html.element "div" false #[("class", "attributes")] #[attrStr]]
+    else
+      #[]
+  let leanInkHtml :=
+    if ←leanInkEnabled? then
+      #[
+        <div class="ink_link">
+          <a href={←declNameToInkLink doc.getName}>ink</a>
+        </div>
+      ]
     else
       #[]
 
@@ -121,6 +132,7 @@ def docInfoToHtml (module : Name) (doc : DocInfo) : HtmlM Html := do
         <div class="gh_link">
           <a href={←getSourceUrl module doc.getDeclarationRange}>source</a>
         </div>
+        [leanInkHtml]
         [attrsHtml]
         {←docInfoHeader doc}
         [docInfoHtml]
@@ -133,7 +145,7 @@ def docInfoToHtml (module : Name) (doc : DocInfo) : HtmlM Html := do
 Rendering a module doc string, that is the ones with an ! after the opener
 as HTML.
 -/
-def modDocToHtml (module : Name) (mdoc : ModuleDoc) : HtmlM Html := do
+def modDocToHtml (mdoc : ModuleDoc) : HtmlM Html := do
   pure 
     <div class="mod_doc">
       [←docStringToHtml mdoc.doc]
@@ -146,7 +158,7 @@ as HTML.
 def moduleMemberToHtml (module : Name) (member : ModuleMember) : HtmlM Html := do
   match member with
   | ModuleMember.docInfo d => docInfoToHtml module d
-  | ModuleMember.modDoc d => modDocToHtml module d
+  | ModuleMember.modDoc d => modDocToHtml d
 
 def declarationToNavLink (module : Name) : Html :=
   <div class="nav_link">
@@ -158,13 +170,7 @@ Returns the list of all imports this module does.
 -/
 def getImports (module : Name) : HtmlM (Array Name) := do
   let res ← getResult
-  let some idx := res.moduleNames.findIdx? (. == module) | unreachable!
-  let adj := res.importAdj.get! idx
-  let mut imports := #[]
-  for i in [:adj.size] do
-    if adj.get! i then
-      imports := imports.push (res.moduleNames.get! i)
-  pure imports
+  pure <| res.moduleInfo.find! module |>.imports
 
 /--
 Sort the list of all modules this one is importing, linkify it
@@ -172,27 +178,6 @@ and return the HTML.
 -/
 def importsHtml (moduleName : Name) : HtmlM (Array Html) := do
   let imports := (←getImports moduleName) |>.qsort Name.lt
-  imports.mapM (λ i => do pure <li>{←moduleToHtmlLink i}</li>)
-
-/--
-Returns a list of all modules this module is imported by.
--/
-def getImportedBy (module : Name) : HtmlM (Array Name) := do
-  let res ← getResult
-  let some idx := res.moduleNames.findIdx? (. == module) | unreachable!
-  let adj := res.importAdj
-  let mut impBy := #[]
-  for i in [:adj.size] do
-    if adj.get! i |>.get! idx then
-      impBy := impBy.push (res.moduleNames.get! i)
-  pure impBy
-
-/--
-Sort the list of all modules this one is imported by, linkify it
-and return the HTML.
--/
-def importedByHtml (moduleName : Name) : HtmlM (Array Html) := do
-  let imports := (←getImportedBy moduleName) |>.qsort Name.lt
   imports.mapM (λ i => do pure <li>{←moduleToHtmlLink i}</li>)
 
 /--
@@ -212,9 +197,7 @@ def internalNav (members : Array Name) (moduleName : Name) : HtmlM Html := do
         </details>
         <details>
           <summary>Imported by</summary>
-          <ul>
-            [←importedByHtml moduleName]
-          </ul>
+          <ul id={s!"imported-by-{moduleName}"} class="imported-by-list"> </ul>
         </details>
       </div>
       [members.map declarationToNavLink]
@@ -223,10 +206,10 @@ def internalNav (members : Array Name) (moduleName : Name) : HtmlM Html := do
 /--
 The main entry point to rendering the HTML for an entire module.
 -/
-def moduleToHtml (module : Process.Module) : HtmlM Html := withReader (setCurrentName module.name) do
+def moduleToHtml (module : Process.Module) : HtmlM Html := withTheReader SiteBaseContext (setCurrentName module.name) do
   let memberDocs ← module.members.mapM (λ i => moduleMemberToHtml module.name i)
   let memberNames := filterMapDocInfo module.members |>.map DocInfo.getName
-  templateExtends (baseHtmlGenerator module.name.toString) $ pure #[
+  templateLiftExtends (baseHtmlGenerator module.name.toString) <| pure #[
     ←internalNav memberNames module.name,
     Html.element "main" false #[] memberDocs
   ]
