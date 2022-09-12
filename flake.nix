@@ -3,10 +3,9 @@
 
   inputs = {
     lean = {
-      # url = "github:leanprover/lean4";
-      url = "github:yatima-inc/lean4/acs/nix-extra-drv-args";
+      url = "github:leanprover/lean4/v4.0.0-m5";
     };
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-21.11";
+    nixpkgs.url = "nixpkgs/nixos-unstable";
     flake-utils = {
       url = "github:numtide/flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
